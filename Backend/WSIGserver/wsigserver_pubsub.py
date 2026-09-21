@@ -661,6 +661,265 @@ def publish_screenshot():
 #		# Close the publisher client if it exists
 #		g.publisher.close()
 
+@app.route('/live_data', methods=['GET'])
+def get_live_data():
+    """实时监控数据：最近游戏事件 + 最近 AI 决策"""
+    try:
+        bq_client = bigquery.Client(project=PROJECT_ID)
+
+        # 最近 15 条游戏信号
+        signals_query = """
+            SELECT
+                JSON_VALUE(data, '$.session_id') AS session_id,
+                SAFE_CAST(JSON_VALUE(data, '$.score') AS INT64) AS score,
+                SAFE_CAST(JSON_VALUE(data, '$.health') AS INT64) AS health,
+                SAFE_CAST(JSON_VALUE(data, '$.hit_count') AS INT64) AS hit_count,
+                SAFE_CAST(JSON_VALUE(data, '$.game_difficulty') AS INT64) AS game_difficulty,
+                FORMAT_TIMESTAMP('%H:%M:%S', publish_time) AS event_time
+            FROM `leon-demo-486305.retro_tech_revolution.raw_game_signals`
+            ORDER BY publish_time DESC
+            LIMIT 15
+        """
+        signals_rows = list(bq_client.query(signals_query).result())
+        signals = [dict(row) for row in signals_rows]
+
+        # 最近 5 条游戏摘要
+        summaries_query = """
+            SELECT session_id, summary_text,
+                   FORMAT_TIMESTAMP('%H:%M:%S', created_at) AS created_time
+            FROM `leon-demo-486305.retro_tech_revolution.game_play_summaries`
+            ORDER BY created_at DESC
+            LIMIT 5
+        """
+        summaries_rows = list(bq_client.query(summaries_query).result())
+        summaries = [dict(row) for row in summaries_rows]
+
+        # 统计
+        stats_query = """
+            SELECT
+                COUNT(DISTINCT JSON_VALUE(data, '$.session_id')) AS total_sessions,
+                COUNT(*) AS total_events,
+                MAX(SAFE_CAST(JSON_VALUE(data, '$.score') AS INT64)) AS top_score
+            FROM `leon-demo-486305.retro_tech_revolution.raw_game_signals`
+            WHERE publish_time > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 HOUR)
+        """
+        stats_rows = list(bq_client.query(stats_query).result())
+        stats = dict(stats_rows[0]) if stats_rows else {}
+
+        return jsonify({
+            "signals": signals,
+            "summaries": summaries,
+            "stats": stats,
+            "timestamp": time.strftime("%H:%M:%S")
+        })
+    except Exception as e:
+        return jsonify({"error": str(e), "signals": [], "summaries": [], "stats": {}}), 500
+
+
+@app.route('/monitor', methods=['GET'])
+def get_monitor_page():
+    """返回实时监控 HTML 页面"""
+    html = """<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RTR Live Monitor</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0a0e1a; color: #e0e6f0;
+    font-family: 'Courier New', monospace;
+    min-height: 100vh; padding: 16px;
+  }
+  .header {
+    display: flex; align-items: center; gap: 12px;
+    border-bottom: 1px solid #1e3a5f; padding-bottom: 12px; margin-bottom: 16px;
+  }
+  .header h1 { font-size: 18px; color: #4a9eff; letter-spacing: 2px; }
+  .pulse { width: 10px; height: 10px; border-radius: 50%; background: #00ff88;
+    animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(1.3)} }
+  .stats-row {
+    display: flex; gap: 12px; margin-bottom: 16px;
+  }
+  .stat-card {
+    flex: 1; background: #0f1929; border: 1px solid #1e3a5f;
+    border-radius: 8px; padding: 12px; text-align: center;
+  }
+  .stat-card .val { font-size: 28px; font-weight: bold; color: #4a9eff; }
+  .stat-card .lbl { font-size: 11px; color: #6080a0; margin-top: 4px; letter-spacing: 1px; }
+  .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .panel { background: #0f1929; border: 1px solid #1e3a5f; border-radius: 8px; padding: 12px; }
+  .panel-title {
+    font-size: 11px; letter-spacing: 2px; color: #4a9eff;
+    border-bottom: 1px solid #1e3a5f; padding-bottom: 8px; margin-bottom: 10px;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { color: #6080a0; font-weight: normal; padding: 4px 8px; text-align: left; font-size: 10px; }
+  td { padding: 5px 8px; border-bottom: 1px solid #131d2e; }
+  .diff-0 { color: #00c853; }
+  .diff-1 { color: #ffab00; }
+  .diff-2 { color: #ff5252; }
+  .new-row {
+    animation: slideIn 0.4s ease-out;
+    background: #0d2340;
+  }
+  @keyframes slideIn { from { opacity:0; background:#1a3a60; } to { opacity:1; background:transparent; } }
+  .summary-item {
+    border-bottom: 1px solid #131d2e; padding: 8px 0; font-size: 12px; line-height: 1.5;
+  }
+  .summary-item .sid { color: #4a9eff; font-size: 10px; margin-bottom: 4px; }
+  .summary-text { color: #a0b4c8; }
+  .ts { color: #3a5a7a; font-size: 10px; }
+  .diff-badge {
+    display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: bold;
+  }
+  .badge-0 { background: #003322; color: #00c853; }
+  .badge-1 { background: #332200; color: #ffab00; }
+  .badge-2 { background: #330011; color: #ff5252; }
+  #refresh-timer { font-size: 11px; color: #3a5a7a; margin-left: auto; }
+  .error { color: #ff5252; font-size: 12px; padding: 8px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="pulse"></div>
+  <h1>RTR LIVE MONITOR</h1>
+  <span style="font-size:11px;color:#6080a0">Pub/Sub BigQuery</span>
+  <span id="refresh-timer"></span>
+</div>
+
+<div class="stats-row">
+  <div class="stat-card">
+    <div class="val" id="stat-sessions">-</div>
+    <div class="lbl">SESSION COUNT (1HR)</div>
+  </div>
+  <div class="stat-card">
+    <div class="val" id="stat-events">-</div>
+    <div class="lbl">BQ EVENTS (1HR)</div>
+  </div>
+  <div class="stat-card">
+    <div class="val" id="stat-topscore">-</div>
+    <div class="lbl">TOP SCORE (1HR)</div>
+  </div>
+  <div class="stat-card">
+    <div class="val" id="stat-time" style="color:#00c853">LIVE</div>
+    <div class="lbl">DATA STATUS</div>
+  </div>
+</div>
+
+<div class="panels">
+  <div class="panel">
+    <div class="panel-title">RAW_GAME_SIGNALS (REALTIME)</div>
+    <table>
+      <thead>
+        <tr>
+          <th>TIME</th><th>SESSION</th><th>SCORE</th><th>HEALTH</th><th>DIFF</th>
+        </tr>
+      </thead>
+      <tbody id="signals-body">
+        <tr><td colspan="5" style="color:#3a5a7a;text-align:center">Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">GAME_PLAY_SUMMARIES (GEMINI)</div>
+    <div id="summaries-list">
+      <div style="color:#3a5a7a;font-size:12px">Waiting for game sessions...</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const BACKEND = '';
+let prevSignalIds = new Set();
+let countdown = 3;
+
+const DIFF_NAMES = ['EASY', 'MEDIUM', 'HARD'];
+const DIFF_CLASSES = ['diff-0', 'diff-1', 'diff-2'];
+const BADGE_CLASSES = ['badge-0', 'badge-1', 'badge-2'];
+
+async function fetchData() {
+  try {
+    const r = await fetch('/live_data');
+    const data = await r.json();
+
+    if (data.error) {
+      document.getElementById('signals-body').innerHTML =
+        `<tr><td colspan="5" class="error">Query error: ${data.error}</td></tr>`;
+      return;
+    }
+
+    const s = data.stats;
+    document.getElementById('stat-sessions').textContent = s.total_sessions ?? '-';
+    document.getElementById('stat-events').textContent = s.total_events ?? '-';
+    document.getElementById('stat-topscore').textContent = s.top_score ?? '-';
+
+    const tbody = document.getElementById('signals-body');
+    const signals = data.signals || [];
+
+    if (signals.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" style="color:#3a5a7a;text-align:center">No data yet — start playing to see live updates</td></tr>';
+    } else {
+      const newIds = new Set(signals.map((s,i) => s.session_id + '_' + i));
+      tbody.innerHTML = signals.map((row, i) => {
+        const diff = row.game_difficulty ?? 0;
+        const diffLabel = DIFF_NAMES[diff] || diff;
+        const badgeClass = BADGE_CLASSES[diff] || 'badge-0';
+        const isNew = i === 0 && !prevSignalIds.has(row.session_id + '_0');
+        const sid = (row.session_id || 'unknown').substring(0, 8);
+        return `<tr class="${isNew ? 'new-row' : ''}">
+          <td class="ts">${row.event_time || ''}</td>
+          <td style="color:#7090b0">${sid}...</td>
+          <td style="color:#ffe082">${row.score ?? '-'}</td>
+          <td style="color:${(row.health ?? 0) < 30 ? '#ff5252' : '#a0c8a0'}">${row.health ?? '-'}</td>
+          <td><span class="diff-badge ${badgeClass}">${diffLabel}</span></td>
+        </tr>`;
+      }).join('');
+      prevSignalIds = newIds;
+    }
+
+    const summariesEl = document.getElementById('summaries-list');
+    const summaries = data.summaries || [];
+    if (summaries.length === 0) {
+      summariesEl.innerHTML = '<div style="color:#3a5a7a;font-size:12px">Waiting for Gemini summaries after game ends...</div>';
+    } else {
+      summariesEl.innerHTML = summaries.map(s => `
+        <div class="summary-item">
+          <div class="sid">${(s.session_id||'').substring(0,12)}...  <span class="ts">${s.created_time||''}</span></div>
+          <div class="summary-text">${s.summary_text || ''}</div>
+        </div>
+      `).join('');
+    }
+
+    document.getElementById('refresh-timer').textContent = `Last update: ${data.timestamp}`;
+
+  } catch(e) {
+    document.getElementById('signals-body').innerHTML =
+      `<tr><td colspan="5" class="error">Network error: ${e.message}</td></tr>`;
+  }
+}
+
+fetchData();
+setInterval(fetchData, 3000);
+
+setInterval(() => {
+  countdown--;
+  if (countdown <= 0) countdown = 3;
+  const timerEl = document.getElementById('refresh-timer');
+  if (!timerEl.textContent.startsWith('Last')) {
+    timerEl.textContent = `Refreshing in ${countdown}s`;
+  }
+}, 1000);
+</script>
+</body>
+</html>"""
+    from flask import Response
+    return Response(html, mimetype='text/html')
+
+
 if __name__ == '__main__':
 	app.run(host='127.0.0.1', port=5055, debug=False)
 	#app.run(host='0.0.0.0', port=5055, debug=False)
