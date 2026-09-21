@@ -90,15 +90,15 @@ backoff_factor=2
 
 
 TOPIC_ID = 'game_signals'
-PROJECT_ID = 'data-cloud-interactive-demo'
+PROJECT_ID = 'leon-demo-486305'
 SERVICE_ACCOUNT_FILE = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
 
-IMAGE_GENERATION_MODEL = " imagen-4.0-fast-generate-preview-06-06" #"imagen-3.0-fast-generate-001"
-BACKSTORY_GENERATION_MODEL = "gemini-2.0-flash-lite-001" #"gemini-2.5-flash-lite-preview-06-17"
+IMAGE_GENERATION_MODEL = "imagen-4.0-fast-generate-preview-06-06"  # 修复：去掉前导空格
+BACKSTORY_GENERATION_MODEL = "gemini-2.0-flash-lite-001"
 
-#GCS 
-SCREENSHOT_BUCKET = "rtr_screenshots"
-BACKSTORY_BUCKET="rtr_backstories"
+#GCS
+SCREENSHOT_BUCKET = os.environ.get('SCREENSHOT_BUCKET', f'rtr-screenshots-{PROJECT_ID}')
+BACKSTORY_BUCKET  = os.environ.get('BACKSTORY_BUCKET',  f'rtr-backstories-{PROJECT_ID}')
 
 #Agent ADK
 AGENT_MODEL = "gemini-2.5-flash"
@@ -121,19 +121,15 @@ SESSION_ID = "DEFAULT_SESSION"
 #	)
 
 try:
-		credentials = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE)
-		if credentials.service_account_email:
-			print(f"Connected as Service Account: {credentials.service_account_email}")
-		elif credentials.universe_domain:  # For user accounts
-			print(f"Connected as User Account (possibly via gcloud auth login): {credentials.email}")
-		else:
-			print("Could not determine the specific user or service account from credentials.")
-except FileNotFoundError:
-		print("error SA file not found")
-		raise FileNotFoundError(f"Service account file not found: {SERVICE_ACCOUNT_FILE}")
+    if SERVICE_ACCOUNT_FILE and os.path.exists(SERVICE_ACCOUNT_FILE):
+        credentials = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE)
+        print(f"Connected as SA: {credentials.service_account_email}")
+    else:
+        import google.auth
+        credentials, _ = google.auth.default()
+        print("Connected via ADC (Application Default Credentials)")
 except Exception as e:
-		raise RuntimeError(f"Error loading credentials from {SERVICE_ACCOUNT_FILE}: {e}")
-		print("error loading SA file")
+    raise RuntimeError(f"Failed to load credentials: {e}")
 
 
 ######
