@@ -56,10 +56,8 @@ from google.adk.agents import Agent
 #from google.adk.models.lite_llm import LiteLlm # For multi-model support
 from google.adk.sessions import InMemorySessionService
 from google.adk.planners import BuiltInPlanner
-from google.adk.tools.mcp_tool.mcp_toolset import (
-    MCPToolset,
-    SseServerParams,
-)
+# MCPToolset / SseServerParams removed — unused in this deployment
+# from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset, SseServerParams
 from google.adk.runners import Runner
 from google import genai
 from google.genai import types # For creating message Content/Parts
@@ -250,7 +248,7 @@ def get_rank(session_id):
 			    JSON_VALUE(data, '$.session_id') As session_id,
 			    JSON_VALUE(data, '$.score') AS score,
 			    JSON_VALUE(data, '$.stopwatch') AS stopwatch
-			  FROM  `data-cloud-interactive-demo.retro_tech_revolution.raw_game_signals` 
+			  FROM  `leon-demo-486305.retro_tech_revolution.raw_game_signals`
 			),
 			PlayerMaxScores AS (
 			  SELECT 
