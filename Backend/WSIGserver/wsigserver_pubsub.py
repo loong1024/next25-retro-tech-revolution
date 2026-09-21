@@ -177,23 +177,70 @@ publisher_client = get_publisher_client()
 
 #bigquery get summary
 def get_gemini_summary(session_id):
-	query ="""SELECT summary_text 
-	FROM `data-cloud-interactive-demo.retro_tech_revolution.game_play_summaries`
-	WHERE session_id= '"""+session_id+"""'
-	LIMIT 1
-	"""
+    """
+    原实现只有 SELECT，依赖一个从未开源的 Cloud Function 写入数据，
+    会空转 126 秒（6 次指数退避）后返回'Gemini 去度假了'。
+    新实现：从 raw_game_signals 拉取本局统计 → 调 Gemini 生成摘要 → 流式写入 BQ。
+    """
+    bq_client = bigquery.Client(project=PROJECT_ID)
 
-	client = bigquery.Client()
-	attempt = 0
-	while attempt < max_bigquery_retries:
-		query_job = client.query(query)
-		results = query_job.result()
-		for row in results:
-			return str(row['summary_text']) #expect one record only
-		attempt +=1
-		sleep_time = backoff_factor ** attempt
-		time.sleep(sleep_time)
-	return "Gemini is gone on vacation! Come back later"
+    # 1. 从已落盘的 PubSub 数据中读本局统计
+    stats_query = """
+        SELECT
+            MAX(SAFE_CAST(JSON_VALUE(data, '$.score') AS INT64))      AS max_score,
+            MAX(SAFE_CAST(JSON_VALUE(data, '$.hit_count') AS INT64))  AS total_hits,
+            MAX(JSON_VALUE(data, '$.stopwatch'))                       AS play_time
+        FROM `{project}.{dataset}.raw_game_signals`
+        WHERE JSON_VALUE(data, '$.session_id') = @session_id
+    """.format(project=PROJECT_ID, dataset='retro_tech_revolution')
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ScalarQueryParameter("session_id", "STRING", session_id)]
+    )
+    stats = None
+    try:
+        rows = list(bq_client.query(stats_query, job_config=job_config).result())
+        if rows:
+            stats = rows[0]
+    except Exception as e:
+        print(f"BQ stats query failed (continuing): {e}")
+
+    max_score  = stats.max_score  if stats and stats.max_score  else "unknown"
+    total_hits = stats.total_hits if stats and stats.total_hits else "unknown"
+    play_time  = stats.play_time  if stats and stats.play_time  else "unknown"
+
+    # 2. 调 Gemini 现场生成摘要
+    genai_client = genai.Client(http_options=HttpOptions(api_version="v1"))
+    prompt = (
+        f"You are a funny game narrator. Write a 2-3 sentence personalized game recap "
+        f"for a player who just finished the Retro Tech Revolution game. "
+        f"Session: {session_id}. Score: {max_score}. Times hit: {total_hits}. Play time: {play_time}. "
+        f"Make it entertaining, reference their stats, keep it under 60 words."
+    )
+    try:
+        response = genai_client.models.generate_content(
+            model=BACKSTORY_GENERATION_MODEL,
+            contents=prompt,
+        )
+        summary_text = response.text
+    except Exception as e:
+        print(f"Gemini summary generation failed: {e}")
+        summary_text = f"You scored {max_score} points in session {session_id}. Well played!"
+
+    # 3. 流式写入 BQ（持久化，供后续查询）
+    try:
+        table_ref = bq_client.dataset('retro_tech_revolution').table('game_play_summaries')
+        errors = bq_client.insert_rows_json(table_ref, [{
+            "session_id": session_id,
+            "summary_text": summary_text,
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }])
+        if errors:
+            print(f"BQ insert errors: {errors}")
+    except Exception as e:
+        print(f"BQ insert failed (non-fatal): {e}")
+
+    return summary_text
 
 #bigquery get ranking
 def get_rank(session_id):
