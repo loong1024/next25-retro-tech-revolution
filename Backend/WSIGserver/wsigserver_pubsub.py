@@ -375,7 +375,11 @@ class rtr_agent:
 
     async def call_rtr_agent_async(self, query: str, base64_image, user_id, session_id):
         print("Running agent...")
-        content = types.Content(role='user', parts=[types.Part(inline_data=base64_image), types.Part(text=query)])
+        parts = []
+        if base64_image is not None:
+            parts.append(types.Part(inline_data=base64_image))   # base64_image 现在是 Blob 对象
+        parts.append(types.Part(text=query))
+        content = types.Content(role='user', parts=parts)
 
         final_response_text = "Agent did not produce a final response." # Default
 
@@ -485,7 +489,13 @@ def get_agent_help():
 
 		#prompt =  data.get('prompt')
 		session_id  = data.get('session_id')
-		img_base64 = data.get('img_base64')
+		img_raw = data.get('image')          # Bug Fix 1: 原为 'img_base64'，客户端实际发的是 'image'
+
+		# 将 data URI 转成 ADK Blob（原代码直接传 None 导致 AI 全程盲）
+		img_blob = None
+		if img_raw:
+			raw_b64 = img_raw.split(',')[1] if ',' in img_raw else img_raw
+			img_blob = types.Blob(data=base64.b64decode(raw_b64), mime_type="image/png")
 
 		
 		stopwatch = data.get('stopwatch')
@@ -530,7 +540,7 @@ def get_agent_help():
 		prompt_text += "Give your answer writting in the following language: "+language
 
 		print("Calling ADK Agent")
-		result = get_adk_agent_help(prompt_text, img_base64, "rtr", session_id)
+		result = get_adk_agent_help(prompt_text, img_blob, "rtr", session_id)
 		print(prompt_text)
 		result = result.replace("```json", "").replace("```", "")
 		return result
