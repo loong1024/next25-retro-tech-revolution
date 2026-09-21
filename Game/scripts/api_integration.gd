@@ -10,8 +10,7 @@ var current_gemini_model = 0
 #####
 
 #### Configuration of the bridge API
-var endpoint = "localhost"
-var port = "5055"
+var base_url = "https://rtr-backend-fvrfj3pqja-uc.a.run.app"
 
 var lang = "English" 
 
@@ -40,7 +39,7 @@ func _on_game_over(state):
 		var http_request  = HTTPRequest.new()
 		add_child(http_request)
 		http_request.request_completed.connect(_on_rank_received.bind(http_request))
-		var connection ="http://"+endpoint+":"+port+"/get_rank"
+		var connection = base_url + "/get_rank"
 		var headers = ["Content-Type: application/json"]
 	
 		var body = JSON.stringify({
@@ -52,7 +51,7 @@ func _on_game_over(state):
 		var http_request2  = HTTPRequest.new()
 		add_child(http_request2)
 		http_request2.request_completed.connect(_on_gemini_summary_received.bind(http_request2))
-		var connection2 ="http://"+endpoint+":"+port+"/get_gemini_summary"
+		var connection2 = base_url + "/get_gemini_summary"
 		http_request2.request(connection2, headers, HTTPClient.METHOD_POST, body) 
 	
 func _on_rank_received(result: int, _response_code: int, _headers: PackedStringArray, body: PackedByteArray, _req_node : HTTPRequest = null):
@@ -101,7 +100,7 @@ func _on_send_screenshots_to_gcs():
 		add_child(http_request)
 		http_request.request_completed.connect(_on_send_screenshots_to_gcs_request_completed.bind(http_request))
 		http_request.request(
-			"http://"+endpoint+":"+port+"/publish_screenshot_image",
+			base_url + "/publish_screenshot_image",
 			["Content-Type: application/json"],
 			HTTPClient.METHOD_POST,
 			body
@@ -177,7 +176,7 @@ func call_api_bridge_generate_backstory_image(prompt):
 	var http_request  = HTTPRequest.new()
 	add_child(http_request)
 	http_request.request_completed.connect(_on_call_api_bridge_backstory_image_request_completed.bind(http_request))
-	var connection ="http://"+endpoint+":"+port+"/get_backstory_image"
+	var connection = base_url + "/get_backstory_image"
 	var headers = ["Content-Type: application/json"]
 	
 	var body = JSON.stringify({
@@ -203,7 +202,7 @@ func call_api_bridge_analytics(json_string):
 	var http_request  = HTTPRequest.new()
 	add_child(http_request)
 	http_request.request_completed.connect(_on_call_api_bridge_request_completed.bind(http_request))
-	var connection ="http://"+endpoint+":"+port+"/backendcomm"
+	var connection = base_url + "/backendcomm"
 	var headers = ["Content-type: application/json"]
 	http_request.request(connection, headers, HTTPClient.METHOD_POST, json_string) 
 ####Receiving analytics registration answer from the API Bridge
@@ -222,7 +221,7 @@ func call_api_bridge_generate_backstory_story(prompt:String):
 	add_child(http_request)
 	http_request.request_completed.connect(_on_call_api_bridge_generate_backstory_story_request_completed.bind(http_request))
 	http_request.request(
-			"http://"+endpoint+":"+port+"/get_backstory_story",
+			base_url + "/get_backstory_story",
 			["Content-Type: application/json"],
 			HTTPClient.METHOD_POST,
 			body
@@ -259,7 +258,7 @@ func call_adk_agent_with_prompt_and_image(base64_image:String):
 	add_child(http_request)
 	http_request.request_completed.connect(_on_call_adk_agent_with_prompt_and_image_request_completed.bind(http_request))
 	http_request.request(
-			"http://"+endpoint+":"+port+"/get_agent_help",
+			base_url + "/get_agent_help",
 			["Content-Type: application/json"],
 			HTTPClient.METHOD_POST,
 			body
